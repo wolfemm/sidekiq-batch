@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'integration_helper'
 
 # Tests deep nesting of batches

@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 module Sidekiq
   class Batch
     module Callback

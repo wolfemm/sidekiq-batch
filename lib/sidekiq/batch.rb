@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'securerandom'
 require 'sidekiq'
 
@@ -19,7 +21,7 @@ module Sidekiq
       @existing = !(!existing_bid || existing_bid.empty?)  # Basically existing_bid.present?
       @initialized = false
       @created_at = Time.now.utc.to_f
-      @bidkey = "BID-" + @bid.to_s
+      @bidkey = "BID-#{@bid.to_s}"
       @ready_to_queue = []
     end
 
@@ -96,8 +98,8 @@ module Sidekiq
             r.hincrby(@bidkey, "total", @ready_to_queue.size)
             r.expire(@bidkey, BID_EXPIRE_TTL)
 
-            r.sadd(@bidkey + "-jids", @ready_to_queue)
-            r.expire(@bidkey + "-jids", BID_EXPIRE_TTL)
+            r.sadd("#{@bidkey}-jids", @ready_to_queue)
+            r.expire("#{@bidkey}-jids", BID_EXPIRE_TTL)
           end
         end
 

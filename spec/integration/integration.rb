@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'integration_helper'
 
 # Simple test of adding jobs to the current batch
