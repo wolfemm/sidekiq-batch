@@ -3,11 +3,13 @@
 module Sidekiq
   class Batch
     module Callback
+      EVENTS = %w(success complete).to_set.freeze
+
       class Worker
         include Sidekiq::Worker
 
         def perform(clazz, event, opts, bid, parent_bid)
-          return unless %w(success complete).include?(event)
+          return unless EVENTS.include?(event)
           clazz, method = clazz.split("#") if (clazz && clazz.class == String && clazz.include?("#"))
           method = "on_#{event}" if method.nil?
           status = Sidekiq::Batch::Status.new(bid)

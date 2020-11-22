@@ -41,7 +41,7 @@ module Sidekiq
     end
 
     def on(event, callback, options = {})
-      return unless %w(success complete).include?(event.to_s)
+      return unless Callback::EVENTS.include?(event.to_s)
       callback_key = "#{@bidkey}-callbacks-#{event}"
       Sidekiq.redis do |r|
         r.multi do
