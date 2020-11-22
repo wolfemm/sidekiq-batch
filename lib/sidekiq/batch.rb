@@ -265,8 +265,8 @@ module Sidekiq
 
       def cleanup_redis(bid)
         Sidekiq.logger.debug {"Cleaning redis of batch #{bid}"}
-        Sidekiq.redis do |r|
-          r.del(
+        Sidekiq.redis do |conn|
+          conn.unlink(
             "BID-#{bid}",
             "BID-#{bid}-callbacks-complete",
             "BID-#{bid}-callbacks-success",
