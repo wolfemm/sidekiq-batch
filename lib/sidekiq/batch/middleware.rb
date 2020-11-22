@@ -18,7 +18,7 @@ module Sidekiq
         def call(_worker, msg, _queue)
           if (bid = msg['bid'])
             begin
-              Thread.current[:batch] = Sidekiq::Batch.new(bid)
+              Thread.current[:batch] = Batch.new(bid)
               yield
               Thread.current[:batch] = nil
               Batch.process_successful_job(bid, msg['jid'])
@@ -37,18 +37,18 @@ module Sidekiq
       def self.configure
         Sidekiq.configure_client do |config|
           config.client_middleware do |chain|
-            chain.add Sidekiq::Batch::Middleware::ClientMiddleware
+            chain.add ClientMiddleware
           end
         end
         Sidekiq.configure_server do |config|
           config.client_middleware do |chain|
-            chain.add Sidekiq::Batch::Middleware::ClientMiddleware
+            chain.add ClientMiddleware
           end
           config.server_middleware do |chain|
-            chain.add Sidekiq::Batch::Middleware::ServerMiddleware
+            chain.add ServerMiddleware
           end
         end
-        Sidekiq::Worker.send(:include, Sidekiq::Batch::Extension::Worker)
+        Sidekiq::Worker.send(:include, Extension::Worker)
       end
     end
   end

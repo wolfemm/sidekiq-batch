@@ -12,7 +12,7 @@ module Sidekiq
           return unless EVENTS.include?(event)
           clazz, method = clazz.split("#") if (clazz && clazz.class == String && clazz.include?("#"))
           method = "on_#{event}" if method.nil?
-          status = Sidekiq::Batch::Status.new(bid)
+          status = Status.new(bid)
 
           if clazz && object = Object.const_get(clazz)
             instance = object.new
@@ -35,8 +35,8 @@ module Sidekiq
 
 
           # Different events are run in different callback batches
-          Sidekiq::Batch.cleanup_redis callback_bid if callback_batch
-          Sidekiq::Batch.cleanup_redis bid if event == :success
+          Batch.cleanup_redis callback_bid if callback_batch
+          Batch.cleanup_redis bid if event == :success
         end
 
         def success(bid, status, parent_bid)
@@ -45,7 +45,7 @@ module Sidekiq
           _, _, success, _, complete, pending, children, failure = Sidekiq.redis do |r|
             r.multi do
               r.sadd("BID-#{parent_bid}-success", bid)
-              r.expire("BID-#{parent_bid}-success", Sidekiq::Batch::BID_EXPIRE_TTL)
+              r.expire("BID-#{parent_bid}-success", BID_EXPIRE_TTL)
               r.scard("BID-#{parent_bid}-success")
               r.sadd("BID-#{parent_bid}-complete", bid)
               r.scard("BID-#{parent_bid}-complete")
@@ -99,8 +99,8 @@ module Sidekiq
         end
 
         def cleanup_redis bid, callback_bid=nil
-          Sidekiq::Batch.cleanup_redis bid
-          Sidekiq::Batch.cleanup_redis callback_bid if callback_bid
+          Batch.cleanup_redis bid
+          Batch.cleanup_redis callback_bid if callback_bid
         end
       end
     end
