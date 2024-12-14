@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 require 'securerandom'
 require 'sidekiq'
 
@@ -103,8 +105,8 @@ module Sidekiq
 
             pipeline.expire(@bidkey, BID_EXPIRE_TTL)
 
-            pipeline.sadd(@bidkey + "-jids", @queued_jids)
-            pipeline.expire(@bidkey + "-jids", BID_EXPIRE_TTL)
+            pipeline.sadd("#{@bidkey}-jids", @queued_jids)
+            pipeline.expire("#{@bidkey}-jids", BID_EXPIRE_TTL)
           end
         end
 
