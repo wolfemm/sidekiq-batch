@@ -6,6 +6,7 @@ require 'sidekiq'
 require 'sidekiq/batch/callback'
 require 'sidekiq/batch/middleware'
 require 'sidekiq/batch/status'
+require 'sidekiq/batch/event'
 require 'sidekiq/batch/version'
 
 module Sidekiq
@@ -21,7 +22,7 @@ module Sidekiq
       @existing = !(!existing_bid || existing_bid.empty?)  # Basically existing_bid.present?
       @initialized = false
       @created_at = Time.now.utc.to_f
-      @bidkey = "BID-" + @bid.to_s
+      @bidkey = "BID-#{@bid}"
       @queued_jids = []
       @pending_jids = []
 
@@ -45,7 +46,7 @@ module Sidekiq
     end
 
     def on(event, callback, options = {})
-      return unless %w(success complete).include?(event.to_s)
+      return unless Sidekiq::Batch::Event.success_or_complete?(event)
       callback_key = "#{@bidkey}-callbacks-#{event}"
       Sidekiq.redis do |r|
         r.multi do |pipeline|
@@ -105,8 +106,10 @@ module Sidekiq
 
             pipeline.expire(@bidkey, BID_EXPIRE_TTL)
 
-            pipeline.sadd("#{@bidkey}-jids", @queued_jids)
-            pipeline.expire("#{@bidkey}-jids", BID_EXPIRE_TTL)
+            jids_key = "#{@bidkey}-jids"
+
+            pipeline.sadd(jids_key, @queued_jids)
+            pipeline.expire(jids_key, BID_EXPIRE_TTL)
           end
         end
 
@@ -128,8 +131,10 @@ module Sidekiq
         Sidekiq.redis do |r|
           r.multi do |pipeline|
             if parent_bid
-              pipeline.hincrby("BID-#{parent_bid}", "total", @pending_jids.length)
-              pipeline.expire("BID-#{parent_bid}", BID_EXPIRE_TTL)
+              parent_batch_key = "BID-#{parent_bid}"
+
+              pipeline.hincrby(parent_batch_key, "total", @pending_jids.length)
+              pipeline.expire(parent_batch_key, BID_EXPIRE_TTL)
             end
 
             pipeline.hincrby(@bidkey, "pending", @pending_jids.length)
@@ -188,70 +193,76 @@ module Sidekiq
 
     class << self
       def process_failed_job(bid, jid)
+        batch_key = "BID-#{bid}"
+
         _, pending, failed, children, complete, parent_bid = Sidekiq.redis do |r|
           r.multi do |pipeline|
-            pipeline.sadd("BID-#{bid}-failed", [jid])
+            pipeline.sadd("#{batch_key}-#{Sidekiq::Batch::Event::FAILED}", [jid])
 
-            pipeline.hincrby("BID-#{bid}", "pending", 0)
-            pipeline.scard("BID-#{bid}-failed")
-            pipeline.hincrby("BID-#{bid}", "children", 0)
-            pipeline.scard("BID-#{bid}-complete")
-            pipeline.hget("BID-#{bid}", "parent_bid")
+            pipeline.hincrby(batch_key, "pending", 0)
+            pipeline.scard("#{batch_key}-#{Sidekiq::Batch::Event::FAILED}")
+            pipeline.hincrby(batch_key, "children", 0)
+            pipeline.scard("#{batch_key}-#{Sidekiq::Batch::Event::COMPLETE}")
+            pipeline.hget(batch_key, "parent_bid")
 
-            pipeline.expire("BID-#{bid}-failed", BID_EXPIRE_TTL)
+            pipeline.expire("#{batch_key}-#{Sidekiq::Batch::Event::FAILED}", BID_EXPIRE_TTL)
           end
         end
 
         # if the batch failed, and has a parent, update the parent to show one pending and failed job
         if parent_bid
+          parent_batch_key = "BID-#{parent_bid}"
+
           Sidekiq.redis do |r|
             r.multi do |pipeline|
-              pipeline.hincrby("BID-#{parent_bid}", "pending", 1)
-              pipeline.sadd("BID-#{parent_bid}-failed", [jid])
-              pipeline.expire("BID-#{parent_bid}-failed", BID_EXPIRE_TTL)
+              pipeline.hincrby("#{parent_batch_key}", "pending", 1)
+              pipeline.sadd("#{parent_batch_key}-failed", [jid])
+              pipeline.expire("#{parent_batch_key}-failed", BID_EXPIRE_TTL)
             end
           end
         end
 
         if pending.to_i == failed.to_i && children == complete
-          enqueue_callbacks(:complete, bid)
+          enqueue_callbacks(Sidekiq::Batch::Event::COMPLETE, bid)
         end
       end
 
       def process_successful_job(bid, jid)
+        batch_key = "BID-#{bid}"
+
         failed, pending, children, complete, success, total, parent_bid = Sidekiq.redis do |r|
           r.multi do |pipeline|
-            pipeline.scard("BID-#{bid}-failed")
-            pipeline.hincrby("BID-#{bid}", "pending", -1)
-            pipeline.hincrby("BID-#{bid}", "children", 0)
-            pipeline.scard("BID-#{bid}-complete")
-            pipeline.scard("BID-#{bid}-success")
-            pipeline.hget("BID-#{bid}", "total")
-            pipeline.hget("BID-#{bid}", "parent_bid")
+            pipeline.scard("#{batch_key}-#{Sidekiq::Batch::Event::FAILED}")
+            pipeline.hincrby(batch_key, "pending", -1)
+            pipeline.hincrby(batch_key, "children", 0)
+            pipeline.scard("#{batch_key}-#{Sidekiq::Batch::Event::COMPLETE}")
+            pipeline.scard("#{batch_key}-#{Sidekiq::Batch::Event::SUCCESS}")
+            pipeline.hget(batch_key, "total")
+            pipeline.hget(batch_key, "parent_bid")
 
-            pipeline.srem("BID-#{bid}-failed", [jid])
-            pipeline.srem("BID-#{bid}-jids", [jid])
-            pipeline.expire("BID-#{bid}", BID_EXPIRE_TTL)
+            pipeline.srem("#{batch_key}-#{Sidekiq::Batch::Event::FAILED}", [jid])
+            pipeline.srem("#{batch_key}-jids", [jid])
+            pipeline.expire(batch_key, BID_EXPIRE_TTL)
           end
         end
 
         all_success = pending.to_i.zero? && children == success
         # if complete or successfull call complete callback (the complete callback may then call successful)
         if (pending.to_i == failed.to_i && children == complete) || all_success
-          enqueue_callbacks(:complete, bid)
-          enqueue_callbacks(:success, bid) if all_success
+          enqueue_callbacks(Event::COMPLETE, bid)
+          enqueue_callbacks(Event::SUCCESS, bid) if all_success
         end
       end
 
       def enqueue_callbacks(event, bid)
-        event_name = event.to_s
+        event_name = event
         batch_key = "BID-#{bid}"
-        callback_key = "#{batch_key}-callbacks-#{event_name}"
+
         already_processed, _, callbacks, queue, parent_bid, callback_batch = Sidekiq.redis do |r|
           r.multi do |pipeline|
             pipeline.hget(batch_key, event_name)
             pipeline.hset(batch_key, event_name, 'true')
-            pipeline.smembers(callback_key)
+            pipeline.smembers("#{batch_key}-callbacks-#{event_name}")
             pipeline.hget(batch_key, "callback_queue")
             pipeline.hget(batch_key, "parent_bid")
             pipeline.hget(batch_key, "callback_batch")
@@ -296,26 +307,30 @@ module Sidekiq
           cb_batch = self.new
           cb_batch.callback_batch = 'true'
           Sidekiq.logger.debug {"Adding callback batch: #{cb_batch.bid} for batch: #{bid}"}
-          cb_batch.on(:complete, "Sidekiq::Batch::Callback::Finalize#dispatch", opts)
+          cb_batch.on(Sidekiq::Batch::Event::COMPLETE, "Sidekiq::Batch::Callback::Finalize#dispatch", opts)
           cb_batch.jobs do
             push_callbacks callback_args, queue
           end
         end
       end
 
-      def cleanup_redis(bid)
-        Sidekiq.logger.debug {"Cleaning redis of batch #{bid}"}
+      def cleanup_redis(*bids)
+        Sidekiq.logger.debug {"Cleaning redis of batches #{bids.join("/")}"}
         Sidekiq.redis do |r|
-          r.unlink(
-            "BID-#{bid}",
-            "BID-#{bid}-callbacks-complete",
-            "BID-#{bid}-callbacks-success",
-            "BID-#{bid}-failed",
+          keys = bids.each_with_object(Set.new) do |bid, keys|
+            batch_key = "BID-#{bid}"
 
-            "BID-#{bid}-success",
-            "BID-#{bid}-complete",
-            "BID-#{bid}-jids",
-          )
+            keys << batch_key
+            keys << "#{batch_key}-callbacks-#{Sidekiq::Batch::Event::COMPLETE}"
+            keys << "#{batch_key}-callbacks-#{Sidekiq::Batch::Event::SUCCESS}"
+            keys << "#{batch_key}-#{Sidekiq::Batch::Event::FAILED}"
+
+            keys << "#{batch_key}-#{Sidekiq::Batch::Event::SUCCESS}"
+            keys << "#{batch_key}-#{Sidekiq::Batch::Event::COMPLETE}"
+            keys << "#{batch_key}-jids"
+          end
+
+          r.unlink(*keys)
         end
       end
 

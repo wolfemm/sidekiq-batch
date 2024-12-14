@@ -18,7 +18,7 @@ module Sidekiq
       end
 
       def failures
-        Sidekiq.redis { |r| r.scard("BID-#{bid}-failed") }.to_i
+        Sidekiq.redis { |r| r.scard("BID-#{bid}-#{Sidekiq::Batch::Event::FAILED}") }.to_i
       end
 
       def created_at
@@ -34,7 +34,7 @@ module Sidekiq
       end
 
       def failure_info
-        Sidekiq.redis { |r| r.smembers("BID-#{bid}-failed") } || []
+        Sidekiq.redis { |r| r.smembers("BID-#{bid}-#{Sidekiq::Batch::Event::FAILED}") } || []
       end
 
       def complete?

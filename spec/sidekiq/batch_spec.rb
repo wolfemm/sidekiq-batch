@@ -162,7 +162,7 @@ describe Sidekiq::Batch do
       let(:failed_jid) { 'xxx' }
 
       it 'tries to call complete callback' do
-        expect(Sidekiq::Batch).to receive(:enqueue_callbacks).with(:complete, bid)
+        expect(Sidekiq::Batch).to receive(:enqueue_callbacks).with(Sidekiq::Batch::Event::COMPLETE, bid)
         Sidekiq::Batch.process_failed_job(bid, failed_jid)
       end
 
@@ -182,22 +182,22 @@ describe Sidekiq::Batch do
     before { Sidekiq.redis { |r| r.hset("BID-#{bid}", 'pending', 1) } }
 
     context 'complete' do
-      before { batch.on(:complete, Object) }
+      before { batch.on(Sidekiq::Batch::Event::COMPLETE, Object) }
       # before { batch.increment_job_queue(bid) }
       before { batch.jobs do TestWorker.perform_async end }
       before { Sidekiq::Batch.process_failed_job(bid, 'failed-job-id') }
 
       it 'tries to call complete callback' do
-        expect(Sidekiq::Batch).to receive(:enqueue_callbacks).with(:complete, bid)
+        expect(Sidekiq::Batch).to receive(:enqueue_callbacks).with(Sidekiq::Batch::Event::COMPLETE, bid)
         Sidekiq::Batch.process_successful_job(bid, 'failed-job-id')
       end
     end
 
     context 'success' do
-      before { batch.on(:complete, Object) }
+      before { batch.on(Sidekiq::Batch::Event::COMPLETE, Object) }
       it 'tries to call complete callback' do
-        expect(Sidekiq::Batch).to receive(:enqueue_callbacks).with(:complete, bid).ordered
-        expect(Sidekiq::Batch).to receive(:enqueue_callbacks).with(:success, bid).ordered
+        expect(Sidekiq::Batch).to receive(:enqueue_callbacks).with(Sidekiq::Batch::Event::COMPLETE, bid).ordered
+        expect(Sidekiq::Batch).to receive(:enqueue_callbacks).with(Sidekiq::Batch::Event::SUCCESS, bid).ordered
         Sidekiq::Batch.process_successful_job(bid, jid)
       end
 
@@ -227,10 +227,10 @@ describe Sidekiq::Batch do
 
   describe '#enqueue_callbacks' do
     let(:callback) { double('callback') }
-    let(:event) { :complete }
+    let(:event) { Sidekiq::Batch::Event::COMPLETE }
 
-    context 'on :success' do
-      let(:event) { :success }
+    context 'on success' do
+      let(:event) { Sidekiq::Batch::Event::SUCCESS }
 
       context 'when no callbacks are defined' do
         it 'clears redis keys' do
